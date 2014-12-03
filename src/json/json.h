@@ -24,6 +24,12 @@
 #include <list>
 #include <string>
 
+#ifdef _WIN32
+	#define NOEXCEPT
+#else
+	#define NOEXCEPT noexcept
+#endif
+
 /// Handmade Json parser. Goal: optimized for elasticsearch.
 /// Must be fast (0 copy parser, etc.)
 
@@ -217,7 +223,7 @@ class Object {
         const Value& getValue(const std::string& key) const;
 
         /// Equivalent to getValue. Return the value of the member[key], does not test if exists.
-        const Value& operator[](const std::string& key) const noexcept;
+        const Value& operator[](const std::string& key) const NOEXCEPT;
 
         /// Give access to member for this operator.
         friend std::ostream& operator<<(std::ostream& os, const Object& obj);

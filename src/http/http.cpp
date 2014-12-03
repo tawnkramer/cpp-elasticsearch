@@ -24,18 +24,56 @@
 #include <cstring>
 #include <sstream>
 #include <iostream>
-#include <netdb.h>
-#include <unistd.h>
 #include <cassert>
 #include <fcntl.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
-#include <algorithm>
-
 #include <fcntl.h>
 
+#ifdef _WIN32
+
+//These local functions help wrap the BSD socket write and read functions with similar arguments
+int SocketWrite(SOCKET curSocket, const char * message, int messageSize);
+int SocketRead(SOCKET curSocket, char * buffer, int bufSize);
+
+//Use these macros to redirect our platform specific operations to the correct socket function
+#define SOCKET_CLOSE	closesocket
+#define SOCKET_WRITE	SocketWrite
+#define SOCKET_READ		SocketRead
+
+//Windows doesn't define an equivalent for ssize_t
+typedef size_t ssize_t;
+
+//Let the windows linker know we need to link with Ws2_32.lib
+#pragma comment(lib, "Ws2_32.lib")
+
+#else
+
+//Use these macros to redirect our platform specific operations to the correct socket function
+#define SOCKET_CLOSE close
+#define SOCKET_WRITE ::write
+#define SOCKET_READ  ::read
+
+//*nix network includes not available on Windows
+#include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#endif
+
+
 /** Returns true on success, or false if there was an error */
-bool SetSocketBlockingEnabled(int fd, bool blocking) {
+bool SetSocketBlockingEnabled(SOCKET fd, bool blocking) {
+
+#ifdef _WIN32
+
+	unsigned long mode = blocking ? 0 : 1;  // 1 to enable non-blocking socket
+	
+	int result = ioctlsocket(fd, FIONBIO, &mode);
+
+	return (result == 0) ? true : false;	
+
+#else
+
    if (fd < 0) return false;
 
    int flags = fcntl(fd, F_GETFL, 0);
@@ -46,6 +84,8 @@ bool SetSocketBlockingEnabled(int fd, bool blocking) {
    flags = blocking ? (flags&~O_NONBLOCK) : (flags|O_NONBLOCK);
 
    return (fcntl(fd, F_SETFL, flags) == 0) ? true : false;
+
+#endif
 }
 
 int to_int(const std::string& str){
@@ -54,13 +94,29 @@ int to_int(const std::string& str){
     return numb;
 }
 
+//Platform specific data for networking
+struct PlatformNetworkData
+{
+	PlatformNetworkData();
+	~PlatformNetworkData();
+
+#ifdef _WIN32
+	//Our local instance of Winsock init data
+	WSADATA _wsaData;
+#endif
+};
+
+
 HTTP::HTTP(std::string uri, bool keepAlive)
 : _connection(0),
   _sockfd(-1),
   _keepAlive(keepAlive),
   _keepAliveTimeout(60),
-  _lastRequest(0)
+  _lastRequest(0),
+  _platformNetData(0)
 {
+	_platformNetData = new PlatformNetworkData();
+
     // Remove http protocol if set.
     size_t pos = uri.find("http://");
     if( pos != std::string::npos)
@@ -106,7 +162,7 @@ HTTP::HTTP(std::string uri, bool keepAlive)
     else
         printf(", session is not keep alive connection.\n");
 
-    bzero(&_client, sizeof(_client));
+    memset(&_client, 0, sizeof(_client));
 
     _client.sin_family = AF_INET;
     _client.sin_port = htons( _port );
@@ -114,6 +170,10 @@ HTTP::HTTP(std::string uri, bool keepAlive)
 }
 
 HTTP::~HTTP() {
+
+	if(_platformNetData) 
+		delete _platformNetData;
+
     // Set the socket free.
     disconnect();
 }
@@ -127,24 +187,30 @@ bool HTTP::connect(){
 
     // If socket point already present. Close connection.
     if(_sockfd >= 0)
-        close(_sockfd);
+        SOCKET_CLOSE(_sockfd);
 
     /* Create a socket point */
-    _sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
+	_sockfd = socket (AF_INET, SOCK_STREAM, 0);
+	
     if (_sockfd < 0)
         EXCEPTION("Error creating socket.");
-
-    // Set socket non-bloking
-    int flags = fcntl(_sockfd, F_GETFL, 0);
-    fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK);
 
     /* Now connect to the server */
     int n = ::connect(_sockfd, (struct sockaddr*)&_client, sizeof(_client));
     if( n < 0 && errno != EINPROGRESS)
         EXCEPTION("Failed to connect to host.");
 
+	// Set socket non-blocking
+	if(!SetSocketBlockingEnabled(_sockfd, false))
+	{
+		SOCKET_CLOSE(_sockfd);		/* just in case */
+		EXCEPTION("unable to set socket option : non-blocking.");
+	}
+
+#ifndef _WIN32
     assert(errno == EINPROGRESS);
+#endif
+
     errno = 0;
 
     if(n == 0){
@@ -163,27 +229,27 @@ bool HTTP::connect(){
     tval.tv_usec = 0;
 
     if ( (n = select(_sockfd+1, &rset, &wset, NULL, &tval)) == 0) {
-        close(_sockfd);		/* timeout */
+        SOCKET_CLOSE(_sockfd);		/* timeout */
         errno = ETIMEDOUT;
         EXCEPTION("Failed to connect to host.");
     }
 
     if (FD_ISSET(_sockfd, &rset) || FD_ISSET(_sockfd, &wset)) {
         int errorValue;
-        socklen_t len = sizeof(errorValue);
-        if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, &errorValue, &len) < 0)
+        int len = sizeof(errorValue);
+        if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, (char*)&errorValue, &len) < 0)
             EXCEPTION("Solaris pending error");
 
         errno = errorValue;
         if(error()) {
-            close(_sockfd);		/* just in case */
+            SOCKET_CLOSE(_sockfd);		/* just in case */
             EXCEPTION("error set by getsockopt.");
         }
     } else
         EXCEPTION("select error: sockfd not set");
 
     if(error()) {
-        close(_sockfd);		/* just in case */
+        SOCKET_CLOSE(_sockfd);		/* just in case */
         EXCEPTION("error set by select.");
     }
 
@@ -195,7 +261,7 @@ bool HTTP::connect(){
 void HTTP::disconnect() {
 
     if(_sockfd >= 0)
-        close(_sockfd);
+        SOCKET_CLOSE(_sockfd);
 
     _sockfd = -1;
 
@@ -236,7 +302,7 @@ bool HTTP::error() {
 bool HTTP::request(const char* method, const char* endUrl, const char* data, Json::Object* jOutput, const char* content_type){
     Result result;
     request(method, endUrl, data, jOutput, result, content_type);
-    return (result == OK);
+    return (result == eOK);
 }
 
 // Get Json Object on web server.
@@ -246,13 +312,13 @@ unsigned int HTTP::request(const char* method, const char* endUrl, const char* d
 
     std::string output;
     statusCode = request(method, endUrl, data, output, result, content_type);
-    if(result != OK) {
+    if(result != eOK) {
 
         // Give a second chance.
         disconnect();
 
         statusCode = request(method, endUrl, data, output, result, content_type);
-        if(result != OK)
+        if(result != eOK)
             return statusCode;
     }
 
@@ -263,7 +329,7 @@ unsigned int HTTP::request(const char* method, const char* endUrl, const char* d
     }
     catch(Exception& e){
         printf("parser() failed in Getter. Exception caught: %s\n", e.what());
-        result = ERROR;
+        result = eERROR;
         return statusCode;
     }
     catch(std::exception& e){
@@ -275,7 +341,7 @@ unsigned int HTTP::request(const char* method, const char* endUrl, const char* d
         EXCEPTION("Unknown exception.");
     }
 
-    result = OK;
+    result = eOK;
     return statusCode;
 }
 
@@ -392,7 +458,7 @@ bool HTTP::write(const std::string& outgoing) {
 
     assert( !error() );
 
-    ssize_t writeReturn = ::write(_sockfd, outgoing.c_str(), outgoing.length());
+    ssize_t writeReturn = SOCKET_WRITE(_sockfd, outgoing.c_str(), outgoing.length());
 
     if(writeReturn == 0) {
         if(!connect())
@@ -420,7 +486,7 @@ bool HTTP::write(const std::string& outgoing) {
 bool HTTP::request(const char* method, const char* endUrl, const char* data, std::string& output, const char* content_type){
     Result result;
     request(method, endUrl, data, output, result, content_type);
-    return (result == OK);
+    return (result == eOK);
 }
 
 unsigned int HTTP::request(const char* method, const char* endUrl, const char* data, std::string& output, Result& result, const char* content_type){
@@ -449,12 +515,12 @@ unsigned int HTTP::request(const char* method, const char* endUrl, const char* d
     unsigned int statusCode = 0;
 
     if(!sendMessage(method, endUrl, data, content_type)) {
-        result = ERROR;
+        result = eERROR;
         return statusCode;
     }
 
     statusCode = readMessage(output, result);
-    if(result != OK) {
+    if(result != eOK) {
 
         // Clear ouput in case we didn't get the full response.
         if(!output.empty())
@@ -476,7 +542,7 @@ unsigned int HTTP::request(const char* method, const char* endUrl, const char* d
         }
     } */
 
-    result = OK;
+    result = eOK;
     return statusCode;
 }
 
@@ -490,7 +556,7 @@ unsigned int HTTP::readMessage(std::string& output, Result& result) {
     bool isChunked = false;
     do {
         statusCode = readMessage(output, contentLength, isChunked, result);
-    } while(result == MORE_DATA);
+    } while(result == eMORE_DATA);
 
     return statusCode;
 }
@@ -526,20 +592,20 @@ unsigned int HTTP::readMessage(std::string& output, size_t& contentLength, bool&
     // Is error ?
     if(ret < 0) {
         disconnect();
-        result = ERROR;
+        result = eERROR;
         return statusCode;
     }
 
     // Is timeout ?
     if(ret == 0) {
-        result = ERROR;
+        result = eERROR;
         return statusCode;
     }
 
     // Check error on socket
     if(FD_ISSET( fd, &errorSet)) {
         error();
-        result = ERROR;
+        result = eERROR;
         return statusCode;
     }
 
@@ -549,7 +615,7 @@ unsigned int HTTP::readMessage(std::string& output, size_t& contentLength, bool&
         return parseMessage(output, contentLength, isChunked, result);
     }
 
-    result = OK;
+    result = eOK;
     return statusCode;
 }
 
@@ -595,12 +661,12 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
         // Socket is ready for reading.
         char recvline[4096];
-        ssize_t readSize = read(_sockfd, recvline, 4095);
+        ssize_t readSize = SOCKET_READ(_sockfd, recvline, 4095);
 
         if(readSize <= 0) {
 
             if(!connect()) {
-                result = ERROR;
+                result = eERROR;
                 return statusCode;
             }
 
@@ -610,7 +676,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
                 errno = 0;
             }
 
-            result = MORE_DATA;
+            result = eMORE_DATA;
             return statusCode;
         }
 
@@ -630,7 +696,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
             // Append the message to the output.
             if( contentLength == 0 ) {
-                result = OK;
+                result = eOK;
                 return statusCode;
             }
         }
@@ -642,7 +708,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
             if(endStatus == NULL) {
                 disconnect();
-                result = ERROR;
+                result = eERROR;
                 return statusCode;
             }
 
@@ -651,7 +717,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
             if (!status) {
                 disconnect();
-                result = ERROR;
+                result = eERROR;
                 return statusCode;
             }
 
@@ -660,7 +726,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
             if (httpVersion.substr(0, 5) != "HTTP/") {
                 disconnect();
-                result = ERROR;
+                result = eERROR;
                 return statusCode;
             }
 
@@ -689,14 +755,14 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
                 case 400:
                     std::cout << "Status: Bad Request, you must reconsidered your request." << std::endl;
                     disconnect();
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
 
                 // If forbidden, it's over.
                 case 403:
                     std::cout << "Status: Forbidden, you must reconsidered your request." << std::endl;
                     disconnect();
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
 
                 // If 404 then check the message and continue to get the complete response.
@@ -709,14 +775,14 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
                 case 500:
                     std::cout << " 500 but statusMessage is not \"Internal Server Error\"." << std::endl;
                     disconnect();
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
 
                 // If unhandled state, return false.
                 default:
                     std::cout << "Weird status code: " << statusCode << std::endl;
                     disconnect();
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
             }
 
@@ -724,7 +790,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
             char* endHeader = strstr(endStatus+2,"\r\n\r\n");
             if(endHeader == NULL) {
                 disconnect();
-                result = ERROR;
+                result = eERROR;
                 return statusCode;
             }
             size_t headerSize = endHeader + 4 - recvline;
@@ -742,7 +808,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
                     // If we did not get the size of the chunk read message as a chunk, go on reading.
                     if(readSize - headerSize <= 0) {
-                        result = MORE_DATA;
+                        result = eMORE_DATA;
                         return statusCode;
                     }
 
@@ -750,13 +816,13 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
                     contentLength = appendChunk(output, endHeader + 4, readSize - headerSize);
 
                     if(contentLength == 0) {
-                        result = OK;
+                        result = eOK;
                         return statusCode;
                     }
 
                 } else {
                     disconnect();
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
                 }
             }
@@ -766,7 +832,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
                 // Error due to conversion may set errno.
                 if(error()) {
-                    result = ERROR;
+                    result = eERROR;
                     return statusCode;
                 }
 
@@ -778,11 +844,11 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
         while( output.length() <  contentLength) {
             char nextContent[4096];
-            readSize = read(_sockfd, nextContent, 4095);
+            readSize = SOCKET_READ(_sockfd, nextContent, 4095);
 
             // When we did not receive the data yet. Wait with select.
             if( readSize == 0 ) {
-                result = MORE_DATA;
+                result = eMORE_DATA;
                 return statusCode;
             }
 
@@ -792,7 +858,7 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
                 if(errno != (EWOULDBLOCK | EAGAIN) )
                     EXCEPTION("read error on socket");
                 errno = 0;
-                result = MORE_DATA;
+                result = eMORE_DATA;
                 return statusCode;
             }
 
@@ -801,12 +867,48 @@ unsigned int HTTP::parseMessage(std::string& output, size_t& contentLength, bool
 
         // If chunked but no size, we return until we receive the answer.
         if(isChunked && contentLength == 0) {
-            result = MORE_DATA;
+            result = eMORE_DATA;
             return statusCode;
         }
 
-    result = OK;
+    result = eOK;
     return statusCode;
 }
 
+PlatformNetworkData::PlatformNetworkData()
+{
+#ifdef _WIN32
+	int result = WSAStartup(MAKEWORD(2,2), &_wsaData);
+	
+	if(result != 0)	{
+		printf("Failed. Error Code : %d",WSAGetLastError());
+		EXCEPTION("failed to init winsock");
+	}
+#endif
+}
+
+PlatformNetworkData::~PlatformNetworkData()
+{
+#ifdef _WIN32
+	WSACleanup();
+#endif
+}
+
+
+#ifdef _WIN32
+
+//These local functions help wrap the send, and recv functions with similar arguments
+//that are passed to the BSD socket functions write and read.
+
+int SocketWrite(SOCKET curSocket, const char * message, int messageSize)
+{
+	return send(curSocket, message, messageSize, 0);
+}
+
+int SocketRead(SOCKET curSocket, char * buffer, int bufSize)
+{
+	return recv(curSocket, buffer, bufSize, 0);
+}
+
+#endif
 

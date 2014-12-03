@@ -26,7 +26,7 @@
 
 int main(int, char**) {
 
-    // Instanciate elasticsearch client.
+    // Instantiate elasticsearch client.
     ElasticSearch es("localhost:9200");
 
     // Index one document.
@@ -44,7 +44,7 @@ int main(int, char**) {
         std::cerr << "Failed to get document." << std::endl;
 
     if(jResult["_source"].getObject() != jData)
-        std::cerr << "Oups, something did not work." << std::endl;
+        std::cerr << "Oops, something did not work." << std::endl;
 
     std::cout << "Great we indexed our first document: " << jResult.pretty() << std::endl;
 

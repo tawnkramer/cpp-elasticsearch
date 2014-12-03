@@ -23,9 +23,26 @@
 #include <string>
 #include <mutex>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <iostream>
+#include <algorithm>
+
+#ifdef _WIN32
+
+	//Windows headers will pull in a min/max macro which will conflict with std::min/max
+	//This NOMINMAX will prevent that collision.
+	#define NOMINMAX
+
+	//MS recommends this mix of includes.
+	//http://msdn.microsoft.com/en-us/library/ms738562%28v=vs.85%29.aspx
+	#include <winsock2.h>
+	#include <ws2tcpip.h>
+
+#else
+
+	#include <sys/socket.h>
+	#include <netinet/in.h>
+
+#endif
 
 #include "json/json.h"
 
@@ -56,10 +73,12 @@ Exception::Exception(const char* fil, int lin, T const& msg) {
 }
 
 enum Result {
-    OK,
-    ERROR,
-    MORE_DATA
+    eOK,
+    eERROR,
+    eMORE_DATA
 };
+
+struct PlatformNetworkData;
 
 class HTTP {
     public:
@@ -160,6 +179,9 @@ class HTTP {
         bool _keepAlive;
         time_t _keepAliveTimeout;
         time_t _lastRequest;
+
+		///platform specific data
+		PlatformNetworkData* _platformNetData;
 
         /// Mutex for every request.
         std::mutex _requestMutex;

@@ -244,7 +244,7 @@ bool ElasticSearch::update(const std::string& index, const std::string& type, co
     return true;
 }
 
-// Update doccument fields.
+// Update document fields.
 bool ElasticSearch::update(const std::string& index, const std::string& type, const std::string& id, const Json::Object& jData){
     if(_readOnly)
         return false;

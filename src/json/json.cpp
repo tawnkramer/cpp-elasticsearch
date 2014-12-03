@@ -199,7 +199,7 @@ unsigned int Json::Value::getUnsignedInt() const {
 int Json::Value::getInt() const {
 
     if(_type == nullType)
-        return 0.;
+        return 0;
 
     if(_type != numberType && _type != stringType)
         throw std::logic_error("not an int");
@@ -816,7 +816,7 @@ const Json::Value& Json::Object::getValue(const std::string& key) const {
 }
 
 // Return the value of the member[key], does not test if exists.
-const Json::Value& Json::Object::operator[](const std::string& key) const noexcept{
+const Json::Value& Json::Object::operator[](const std::string& key) const NOEXCEPT{
     return _memberMap.find(key)->second;
 }
 

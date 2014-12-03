@@ -1,0 +1,26 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cpp-elasticsearch", "cpp-elasticsearch.vcxproj", "{B34E4841-09C2-40D4-AB3C-1D9EA9D95516}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "getstarted", "..\getstarted\getstarted.vcxproj", "{6DD4055B-D3E7-4C7A-9528-41A06E858823}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B34E4841-09C2-40D4-AB3C-1D9EA9D95516}.Debug|Win32.ActiveCfg = Debug|Win32
+		{B34E4841-09C2-40D4-AB3C-1D9EA9D95516}.Debug|Win32.Build.0 = Debug|Win32
+		{B34E4841-09C2-40D4-AB3C-1D9EA9D95516}.Release|Win32.ActiveCfg = Release|Win32
+		{B34E4841-09C2-40D4-AB3C-1D9EA9D95516}.Release|Win32.Build.0 = Release|Win32
+		{6DD4055B-D3E7-4C7A-9528-41A06E858823}.Debug|Win32.ActiveCfg = Debug|Win32
+		{6DD4055B-D3E7-4C7A-9528-41A06E858823}.Debug|Win32.Build.0 = Debug|Win32
+		{6DD4055B-D3E7-4C7A-9528-41A06E858823}.Release|Win32.ActiveCfg = Release|Win32
+		{6DD4055B-D3E7-4C7A-9528-41A06E858823}.Release|Win32.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
