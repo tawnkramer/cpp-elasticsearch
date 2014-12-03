@@ -211,9 +211,8 @@ bool HTTP::connect(){
 	}
 
 	//In windows, there was no errno after connecting. The value was zero.
-#ifndef _WIN32
-    assert(errno == EINPROGRESS);
-#endif
+	//In linux, there was also no erro.
+    //assert(errno == EINPROGRESS);
 
     errno = 0;
 
