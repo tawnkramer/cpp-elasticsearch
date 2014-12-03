@@ -43,6 +43,9 @@ int SocketRead(SOCKET curSocket, char * buffer, int bufSize);
 //Windows doesn't define an equivalent for ssize_t
 typedef size_t ssize_t;
 
+//Windows needs socklen_t as well
+typedef int socklen_t;
+
 //Let the windows linker know we need to link with Ws2_32.lib
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -62,7 +65,7 @@ typedef size_t ssize_t;
 
 
 /** Returns true on success, or false if there was an error */
-bool SetSocketBlockingEnabled(SOCKET fd, bool blocking) {
+bool SetSocketBlockingEnabled(int fd, bool blocking) {
 
 #ifdef _WIN32
 
@@ -207,6 +210,7 @@ bool HTTP::connect(){
 		EXCEPTION("unable to set socket option : non-blocking.");
 	}
 
+	//In windows, there was no errno after connecting. The value was zero.
 #ifndef _WIN32
     assert(errno == EINPROGRESS);
 #endif
@@ -236,7 +240,7 @@ bool HTTP::connect(){
 
     if (FD_ISSET(_sockfd, &rset) || FD_ISSET(_sockfd, &wset)) {
         int errorValue;
-        int len = sizeof(errorValue);
+        socklen_t len = sizeof(errorValue);
         if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, (char*)&errorValue, &len) < 0)
             EXCEPTION("Solaris pending error");
 
